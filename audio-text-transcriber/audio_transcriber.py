@@ -18,7 +18,6 @@ st.title("🎙️ Simple Audio Transcriber (Offline)")
 st.markdown("Upload an audio file (MP3 or M4A) and get its transcription using a local OpenAI Whisper model. No API key needed!")
 
 # --- Model Selection (for local Whisper) ---
-# You can offer choices to the user or fix one
 model_options = {
     "Tiny (Fast, Less Accurate, CPU-friendly)": "tiny",
     "Base (Good Balance)": "base",
@@ -53,20 +52,16 @@ uploaded_file = st.file_uploader(
 )
 
 # --- Constants for Chunking ---
-# A safe chunk length (e.g., 10 minutes) for common bitrates to stay under 25MB
-# This is less critical for local models (no 25MB API limit), but still good for managing memory
-# and providing intermediate feedback for very long files.
 CHUNK_LENGTH_MINUTES = 10
 CHUNK_LENGTH_MS = CHUNK_LENGTH_MINUTES * 60 * 1000  # Convert to milliseconds
 
 # --- Helper Function for Chunking and Local Transcription ---
-# We don't use st.cache_data here because the model itself is cached, and the input audio is new each time.
 
 
 def split_audio_and_transcribe_local(audio_file_path, whisper_model):
     """Splits audio into chunks, transcribes each locally, and returns combined transcription."""
 
-    transcriptions = []
+    full_transcription_text = ""
     temp_chunk_files = []  # To keep track of temporary chunk files for cleanup
 
     try:
@@ -75,9 +70,6 @@ def split_audio_and_transcribe_local(audio_file_path, whisper_model):
 
         st.info(f"Audio file duration: {total_length_ms / 60000:.2f} minutes.")
 
-        # Determine if chunking is needed for user experience (not strict file size limit anymore)
-        # We can still chunk if the file is very long to prevent out-of-memory issues for smaller systems
-        # or to provide better progress feedback.
         if total_length_ms > CHUNK_LENGTH_MS:
             num_chunks = math.ceil(total_length_ms / CHUNK_LENGTH_MS)
             st.info(
@@ -86,8 +78,11 @@ def split_audio_and_transcribe_local(audio_file_path, whisper_model):
             num_chunks = 1  # Process as a single chunk
             st.info("Processing as a single chunk.")
 
-        progress_text = "Transcribing audio... Please wait."
-        my_bar = st.progress(0, text=progress_text)
+        # Create a placeholder for the overall transcription result
+        # This will be updated dynamically with each completed chunk
+        transcription_display_area = st.empty()
+        current_chunk_status_area = st.empty()  # For "Transcribing chunk X of Y..."
+        my_bar = st.progress(0, text="Initializing...")  # Progress bar
 
         for i in range(num_chunks):
             start_ms = i * CHUNK_LENGTH_MS
@@ -101,24 +96,43 @@ def split_audio_and_transcribe_local(audio_file_path, whisper_model):
                 chunk.export(chunk_path, format="mp3")
                 temp_chunk_files.append(chunk_path)  # Add to list for cleanup
 
-            st.write(f"Transcribing chunk {i+1} of {num_chunks}...")
+            # Update status for the current chunk
+            current_chunk_status_area.info(
+                f"Transcribing chunk {i+1} of {num_chunks}...")
             my_bar.progress((i + 1) / num_chunks,
                             text=f"Transcribing chunk {i+1} of {num_chunks}...")
 
             # Local Whisper transcription
             result = whisper_model.transcribe(chunk_path)
-            transcriptions.append(result["text"])
+            chunk_text = result["text"]
+
+            # Append this chunk's transcription to the full text
+            full_transcription_text += chunk_text + " "  # Add a space between chunks
+
+            # Update the displayed transcription with the latest completed chunk
+            transcription_display_area.text_area(
+                "Real-time Transcription Progress:",
+                full_transcription_text,
+                height=300,
+                # Unique key for each update, though not strictly necessary with st.empty.
+                key=f"transcription_progress_{i}"
+            )
 
         my_bar.empty()  # Remove progress bar
-        return " ".join(transcriptions)
+        current_chunk_status_area.empty()  # Clear the chunk status
+        return full_transcription_text.strip()  # Remove trailing space
 
     except Exception as e:
         st.error(f"Error during audio processing or transcription: {e}")
         st.warning(
             "Ensure FFmpeg is installed and your system has enough RAM/VRAM for the chosen Whisper model.")
+        # Clean up in case of error too
+        for f in temp_chunk_files:
+            if os.path.exists(f):
+                os.remove(f)
         return None
     finally:
-        # Clean up all temporary chunk files
+        # Clean up all temporary chunk files (redundant if caught by except, but good for robustnes)
         for f in temp_chunk_files:
             if os.path.exists(f):
                 os.remove(f)
@@ -136,14 +150,18 @@ if st.button("Transcribe Audio"):
 
         transcription_result = None
         try:
-            # Call the local transcription function, which handles chunking internally
+            st.info(f"Processing file: {uploaded_file.name}")
+            # Call the local transcription function, which handles chunking internally and displays progress
             transcription_result = split_audio_and_transcribe_local(
                 primary_temp_file_path, model)
 
             if transcription_result:
                 st.success("Transcription Complete!")
-                st.subheader("Transcription Result:")
-                st.text_area("Transcription", transcription_result, height=300)
+                st.subheader("Final Transcription Result:")
+                # This final display might be redundant if the text_area is updated in place,
+                # but it clearly marks the end.
+                st.text_area("Final Transcription",
+                             transcription_result, height=300)
 
         except Exception as e:
             st.error(f"An unexpected error occurred: {e}")

@@ -1,5 +1,5 @@
 openai-whisper
 ffmpeg
-pydub
-pyaudioop
 numpy
+pydub
+audiop
