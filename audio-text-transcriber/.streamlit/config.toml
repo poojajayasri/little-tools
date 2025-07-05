@@ -1,4 +1,0 @@
-[runner]
-# Set the Python version for the Streamlit app.
-# Python 3.10 is a stable and widely supported version for many libraries.
-python_version = "3.10"
